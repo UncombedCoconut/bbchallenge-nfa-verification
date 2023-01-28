@@ -1,3 +1,5 @@
+# Warning: the below format is superseded. A verification file with ID=11 should now conform to [this spec](https://github.com/TonyGuil/bbchallenge/blob/main/FAR/ReadMe.md)
+
 Tentative DeciderInfo format for NFA proofs (ID = 11):
 
     direction:          uint8_t (0 if the automaton scans left-to-right, 1 if it scans right-to-left)
