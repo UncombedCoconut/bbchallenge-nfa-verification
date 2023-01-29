@@ -215,14 +215,14 @@ class DeciderInfoHybrid(DeciderInfo):
     @classmethod
     def from_bytes(cls, info_bytes):
         dir_code = info_bytes[0]
-        self.dfa_states = int.from_bytes(info_bytes[1:3], 'big')
-        self.nfa_states = int.from_bytes(info_bytes[3:5], 'big')
+        nD = int.from_bytes(info_bytes[1:3], 'big')
+        nN = int.from_bytes(info_bytes[3:5], 'big')
         offset = 5
         dfa_transitions = list(zip(info_bytes[3:2*nD+3:2], info_bytes[4:2*nD+4:2]))
         offset += 2*nD
         vec_len= (nN+7) // 8
         nfa_transitions = []
-        for _ in range(2 + TM_STATES):
+        for _ in range(2):
             nfa_transitions.append( np.unpackbits(np.frombuffer(info_bytes, np.uint8, offset=offset, count=nN*vec_len).reshape((nN, vec_len)), 1, nN, 'little').astype(bool) )
             offset += nN * vec_len
         accept = np.unpackbits(np.frombuffer(info_bytes, np.uint8, offset=offset, count=vec_len).reshape((vec_len, 1)), 0, nN, 'little').astype(bool)
