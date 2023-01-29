@@ -76,7 +76,7 @@ class DeciderInfoDFA(DeciderInfo):
 
 @dataclass
 class DeciderInfoNFA(DeciderInfo):
-    TYPE_ID = 11
+    TYPE_ID = 0xff # DO NOT USE
 
     direction: Direction
     n_states: int
@@ -198,7 +198,70 @@ def compute_nfa_info(tm, dfa_info):
         old, accept = accept.copy(), transitions[0] @ accept
         if np.array_equal(old, accept): break
 
-    return DeciderInfoNFA(dfa_info.direction, n, transitions, accept, halt)
+    return DeciderInfoHybrid(dfa_info.direction, nD, nN, dfa_info.transitions, [transitions[0][nD:n, nD:n], transitions[1][nD:, nD:]], accept[nD:, :])
+
+
+@dataclass
+class DeciderInfoHybrid(DeciderInfo):
+    TYPE_ID = 11
+
+    direction: Direction
+    dfa_states: int
+    nfa_states: int
+    dfa_transitions: list[tuple[int, int]]
+    nfa_transitions: list[np.ndarray]   # n_states x n_states each for symbols 0, 1
+    accept: np.ndarray              # n_states x 1
+
+    @classmethod
+    def from_bytes(cls, info_bytes):
+        dir_code = info_bytes[0]
+        self.dfa_states = int.from_bytes(info_bytes[1:3], 'big')
+        self.nfa_states = int.from_bytes(info_bytes[3:5], 'big')
+        offset = 5
+        dfa_transitions = list(zip(info_bytes[3:2*nD+3:2], info_bytes[4:2*nD+4:2]))
+        offset += 2*nD
+        vec_len= (nN+7) // 8
+        nfa_transitions = []
+        for _ in range(2 + TM_STATES):
+            nfa_transitions.append( np.unpackbits(np.frombuffer(info_bytes, np.uint8, offset=offset, count=nN*vec_len).reshape((nN, vec_len)), 1, nN, 'little').astype(bool) )
+            offset += nN * vec_len
+        accept = np.unpackbits(np.frombuffer(info_bytes, np.uint8, offset=offset, count=vec_len).reshape((vec_len, 1)), 0, nN, 'little').astype(bool)
+        return cls(Direction(dir_code), nD, nN, dfa_transitions, nfa_transitions, accept)
+
+    def to_bytes(self):
+        out = bytearray((self.direction.value,))
+        out.extend(self.dfa_states.to_bytes(2, 'big'))
+        out.extend(self.nfa_states.to_bytes(2, 'big'))
+        out.extend(val for row in self.dfa_transitions for val in row)
+        for mat in self.nfa_transitions:
+            out.extend(np.packbits(mat, 1, 'little').tobytes())
+        out.extend(np.packbits(self.accept, 0, 'little').tobytes())
+        return out
+
+    def check(self, tm):
+        dir_code = self.direction.value
+        nD = self.dfa_states
+        nN = self.nfa_states
+        if nN < TM_STATES * nD + 1:
+            return CheckResult.FAIL
+        n = nD + nN
+        transitions = [np.zeros((n, n), bool) for _ in range(2 + TM_STATES)]
+        halt = np.zeros((1, n), bool)
+
+        # Define the NFA as in paper section "Search algorithm: direct", with initially empty "R_b" and "a".
+        q_halt = n-1
+        for q, destinations in enumerate(self.dfa_transitions):
+            for b, delta_q_b in enumerate(destinations):
+                transitions[b][q, delta_q_b] = True
+        for q_tm in range(TM_STATES):
+            for q_dfa in range(nD):
+                transitions[2+q_tm][q_dfa, nD + q_dfa*TM_STATES+q_tm] = True
+        halt[0, q_halt] = True
+        for b in range(2):
+            transitions[b][nD:, nD:] = self.nfa_transitions[b]
+        accept = np.zeros((n, 1), bool)
+        accept[nD:, :] = self.accept
+        return DeciderInfoNFA(self.direction, n, transitions, accept, halt).check(tm)
 
 
 if __name__ == '__main__':
