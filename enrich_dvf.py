@@ -218,7 +218,7 @@ class DeciderInfoHybrid(DeciderInfo):
         nD = int.from_bytes(info_bytes[1:3], 'big')
         nN = int.from_bytes(info_bytes[3:5], 'big')
         offset = 5
-        dfa_transitions = list(zip(info_bytes[3:2*nD+3:2], info_bytes[4:2*nD+4:2]))
+        dfa_transitions = list(zip(info_bytes[5:2*nD+3:2], info_bytes[6:2*nD+4:2]))
         offset += 2*nD
         vec_len= (nN+7) // 8
         nfa_transitions = []
@@ -242,7 +242,7 @@ class DeciderInfoHybrid(DeciderInfo):
         dir_code = self.direction.value
         nD = self.dfa_states
         nN = self.nfa_states
-        if nN < TM_STATES * nD + 1:
+        if nN < TM_STATES * nD + 1 or not all(0 <= ti < nD for t01 in self.dfa_transitions for ti in t01):
             return CheckResult.FAIL
         n = nD + nN
         transitions = [np.zeros((n, n), bool) for _ in range(2 + TM_STATES)]
