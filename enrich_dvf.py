@@ -218,7 +218,7 @@ class DeciderInfoHybrid(DeciderInfo):
         nD = int.from_bytes(info_bytes[1:3], 'big')
         nN = int.from_bytes(info_bytes[3:5], 'big')
         offset = 5
-        dfa_transitions = list(zip(info_bytes[5:2*nD+3:2], info_bytes[6:2*nD+4:2]))
+        dfa_transitions = list(zip(info_bytes[5:2*nD+5:2], info_bytes[6:2*nD+6:2]))
         offset += 2*nD
         vec_len= (nN+7) // 8
         nfa_transitions = []
