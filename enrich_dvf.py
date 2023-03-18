@@ -264,6 +264,158 @@ class DeciderInfoHybrid(DeciderInfo):
         return DeciderInfoNFA(self.direction, n, transitions, accept, halt).check(tm)
 
 
+class BouncerType(Enum): Unilateral, Bilateral, Translated = range(1, 4)
+
+@dataclass
+class TapeDescriptor:
+    ''' Wall[0] Repeater[0] ... Wall[nPartitions-1] Repeater[nPartitions-1]  Wall[nPartitions]
+    For each partition, the number of repetitions of each Repeater remains unchanged throughout the Cycle, and is found in the RepeaterCount array in the VerificationInfo '''
+    state: int
+    tape_head_wall: int
+    tape_head_offset: int
+    wall: list[list[int]]
+    repeater: list[list[int]]
+
+    @classmethod
+    def read_from(cls, view, n_partitions):
+        state, tape_head_wall = view[:2]
+        tape_head_offset, view = int.from_bytes(view[2:4], 'big', signed=True), view[4:]
+        wall, repeater = arrays = [[None]*(n_partitions+1), [None]*n_partitions]
+        for arr in arrays:
+            for i in range(len(arr)):
+                l = int.from_bytes(view[:2], 'big')
+                arr[i] = list(view[2:2+l])
+                view = view[2+l:]
+        return cls(state, tape_head_wall, tape_head_offset, wall, repeater), view
+
+    def to_bytes(self):
+        out = bytearray((self.state, self.tape_head_wall))
+        out.extend(self.tape_head_offset.to_bytes(2, 'big', signed=True))
+        for arr in self.wall + self.repeater:
+            out.extend(len(arr).to_bytes(2, 'big'))
+            out.extend(arr)
+        return out
+
+@dataclass
+class Segment:
+    state: int
+    tape_head: int
+    tape: list[int]
+
+    @classmethod
+    def read_from(cls, view):
+        state = view[0]
+        tape_head = int.from_bytes(view[1:3], 'big', signed=True)
+        l = int.from_bytes(view[3:5], 'big')
+        return cls(state, tape_head, list(view[5:5+l])), view[5+l:]
+
+    def to_bytes(self):
+        out = bytearray((self.state,))
+        out.extend(self.tape_head.to_bytes(2, 'big', signed=True))
+        out.extend(len(self.tape).to_bytes(2, 'big'))
+        out.extend(self.tape)
+        return out
+
+@dataclass
+class Transition:
+    n_steps: int
+    initial: Segment
+    final: Segment
+
+    @classmethod
+    def read_from(cls, view):
+        n_steps, view = int.from_bytes(view[:2], 'big'), view[2:]
+        initial, view = Segment.read_from(view)
+        final, view = Segment.read_from(view)
+        return cls(n_steps, initial, final), view
+
+    def to_bytes(self):
+        out = bytearray()
+        out.extend(self.n_steps.to_bytes(2, 'big'))
+        out.extend(self.initial.to_bytes())
+        out.extend(self.final.to_bytes())
+        return out
+
+@dataclass
+class RunDescriptor:
+    partition: int
+    repeater_transition: Transition
+    td0: TapeDescriptor
+    transition: Transition
+    td1: TapeDescriptor
+
+    @classmethod
+    def read_from(cls, view, n_partitions):
+        partition, view = view[0], view[1:]
+        repeater_transition, view = Transition.read_from(view)
+        td0, view = TapeDescriptor.read_from(view, n_partitions)
+        transition, view = Transition.read_from(view)
+        td1, view = TapeDescriptor.read_from(view, n_partitions)
+        return cls(partition, repeater_transition, td0, transition, td1), view
+
+    def to_bytes(self):
+        out = bytearray((self.partition,))
+        out.extend(self.repeater_transition.to_bytes())
+        out.extend(self.td0.to_bytes())
+        out.extend(self.transition.to_bytes())
+        out.extend(self.td1.to_bytes())
+        return out
+
+@dataclass
+class DeciderInfoBouncer(DeciderInfo):
+    TYPE_ID = 6
+
+    bouncer_type: BouncerType
+    n_partitions: int
+    n_runs: int
+    initial_steps: int
+    initial_leftmost: int
+    initial_rightmost: int
+    final_steps: int
+    final_leftmost: int
+    final_rightmost: int
+    repeater_count: list[int]
+    initial_tape: TapeDescriptor
+    run_list: list[RunDescriptor]
+
+    @classmethod
+    def from_bytes(cls, info_bytes):
+        info_bytes = memoryview(info_bytes)
+        bouncer_type = BouncerType(info_bytes[0])
+        n_partitions = info_bytes[1]
+        n_runs = int.from_bytes(info_bytes[2:4], 'big')
+        initial_steps = int.from_bytes(info_bytes[4:8], 'big')
+        initial_leftmost = int.from_bytes(info_bytes[8:12], 'big', signed=True)
+        initial_rightmost = int.from_bytes(info_bytes[12:16], 'big', signed=True)
+        final_steps = int.from_bytes(info_bytes[16:20], 'big')
+        final_leftmost = int.from_bytes(info_bytes[20:24], 'big', signed=True)
+        final_rightmost = int.from_bytes(info_bytes[24:28], 'big', signed=True)
+        bouncer_type = BouncerType(bouncer_type)
+        repeater_count = [int.from_bytes(info_bytes[28+2*i:30+2*i], 'big') for i in range(n_partitions)]
+        initial_tape, info_bytes = TapeDescriptor.read_from(info_bytes[28+2*n_partitions:], n_partitions)
+        run_list = []
+        for _ in range(n_runs):
+            run, info_bytes = RunDescriptor.read_from(info_bytes, n_partitions)
+            run_list.append(run)
+        return cls(bouncer_type, n_partitions, n_runs, initial_steps, initial_leftmost, initial_rightmost, final_steps, final_leftmost, final_rightmost, repeater_count, initial_tape, run_list)
+
+    def to_bytes(self):
+        out = bytearray((self.bouncer_type.value, self.n_partitions))
+        out.extend(self.n_runs.to_bytes(2, 'big'))
+        out.extend(self.initial_steps.to_bytes(4, 'big'))
+        out.extend(self.initial_leftmost.to_bytes(4, 'big', signed=True))
+        out.extend(self.initial_rightmost.to_bytes(4, 'big', signed=True))
+        out.extend(self.final_steps.to_bytes(4, 'big'))
+        out.extend(self.final_leftmost.to_bytes(4, 'big', signed=True))
+        out.extend(self.final_rightmost.to_bytes(4, 'big', signed=True))
+        for rc in self.repeater_count:
+            out.extend(rc.to_bytes(2, 'big'))
+        out.extend(self.initial_tape.to_bytes())
+        for run in self.run_list:
+            out.extend(run.to_bytes())
+        return out
+
+
 if __name__ == '__main__':
     ap = ArgumentParser(description='Enrich and check verification data for Finite Automata Reduction.')
     ap.add_argument('-d', '--db', help='Path to DB file', default='../../all_5_states_undecided_machines_with_global_header')
