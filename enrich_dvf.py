@@ -390,7 +390,6 @@ class DeciderInfoBouncer(DeciderInfo):
         final_steps = int.from_bytes(info_bytes[16:20], 'big')
         final_leftmost = int.from_bytes(info_bytes[20:24], 'big', signed=True)
         final_rightmost = int.from_bytes(info_bytes[24:28], 'big', signed=True)
-        bouncer_type = BouncerType(bouncer_type)
         repeater_count = [int.from_bytes(info_bytes[28+2*i:30+2*i], 'big') for i in range(n_partitions)]
         initial_tape, info_bytes = TapeDescriptor.read_from(info_bytes[28+2*n_partitions:], n_partitions)
         run_list = []
@@ -413,6 +412,85 @@ class DeciderInfoBouncer(DeciderInfo):
         out.extend(self.initial_tape.to_bytes())
         for run in self.run_list:
             out.extend(run.to_bytes())
+        return out
+
+@dataclass
+class NewRunDescriptor:
+    partition: int
+    repeater_transition: Transition
+    transition: Transition
+
+    @classmethod
+    def read_from(cls, view, n_partitions):
+        partition, view = view[0], view[1:]
+        repeater_transition, view = Transition.read_from(view)
+        transition, view = Transition.read_from(view)
+        return cls(partition, repeater_transition, transition), view
+
+    def to_bytes(self):
+        out = bytearray((self.partition,))
+        out.extend(self.repeater_transition.to_bytes())
+        out.extend(self.transition.to_bytes())
+        return out
+
+
+@dataclass
+class DeciderInfoNewBouncer(DeciderInfo):
+    TYPE_ID = 7
+
+    bouncer_type: BouncerType
+    n_partitions: int
+    n_runs: int
+    initial_steps: int
+    initial_leftmost: int
+    initial_rightmost: int
+    final_steps: int
+    final_leftmost: int
+    final_rightmost: int
+    repeater_count: list[int]
+    initial_tape: TapeDescriptor
+    run_list: list[NewRunDescriptor]
+    final_adjustment: int
+    final_tape: TapeDescriptor
+
+    @classmethod
+    def from_bytes(cls, info_bytes):
+        info_bytes = memoryview(info_bytes)
+        bouncer_type = BouncerType(info_bytes[0])
+        n_partitions = info_bytes[1]
+        n_runs = int.from_bytes(info_bytes[2:4], 'big')
+        initial_steps = int.from_bytes(info_bytes[4:8], 'big')
+        initial_leftmost = int.from_bytes(info_bytes[8:12], 'big', signed=True)
+        initial_rightmost = int.from_bytes(info_bytes[12:16], 'big', signed=True)
+        final_steps = int.from_bytes(info_bytes[16:20], 'big')
+        final_leftmost = int.from_bytes(info_bytes[20:24], 'big', signed=True)
+        final_rightmost = int.from_bytes(info_bytes[24:28], 'big', signed=True)
+        repeater_count = [int.from_bytes(info_bytes[28+2*i:30+2*i], 'big') for i in range(n_partitions)]
+        initial_tape, info_bytes = TapeDescriptor.read_from(info_bytes[28+2*n_partitions:], n_partitions)
+        run_list = []
+        for _ in range(n_runs):
+            run, info_bytes = NewRunDescriptor.read_from(info_bytes, n_partitions)
+            run_list.append(run)
+        final_adjustment = int.from_bytes(info_bytes[:2], 'big')
+        final_tape, info_bytes = TapeDescriptor.read_from(info_bytes[2:], n_partitions)
+        return cls(bouncer_type, n_partitions, n_runs, initial_steps, initial_leftmost, initial_rightmost, final_steps, final_leftmost, final_rightmost, repeater_count, initial_tape, run_list, final_adjustment, final_tape)
+
+    def to_bytes(self):
+        out = bytearray((self.bouncer_type.value, self.n_partitions))
+        out.extend(self.n_runs.to_bytes(2, 'big'))
+        out.extend(self.initial_steps.to_bytes(4, 'big'))
+        out.extend(self.initial_leftmost.to_bytes(4, 'big', signed=True))
+        out.extend(self.initial_rightmost.to_bytes(4, 'big', signed=True))
+        out.extend(self.final_steps.to_bytes(4, 'big'))
+        out.extend(self.final_leftmost.to_bytes(4, 'big', signed=True))
+        out.extend(self.final_rightmost.to_bytes(4, 'big', signed=True))
+        for rc in self.repeater_count:
+            out.extend(rc.to_bytes(2, 'big'))
+        out.extend(self.initial_tape.to_bytes())
+        for run in self.run_list:
+            out.extend(run.to_bytes())
+        out.extend(self.final_adjustment.to_bytes(2, 'big'))
+        out.extend(self.final_tape.to_bytes())
         return out
 
 
